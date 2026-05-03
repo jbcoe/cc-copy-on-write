@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <memory_resource>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -41,10 +42,15 @@ inline constexpr bool is_in_place_type_v<std::in_place_type_t<T>> = true;
 
 } // namespace detail
 
-// copy_on_write<V> adds shared copy-on-write ownership around any owning value
-// wrapper V that exposes value_type and allocator_type (e.g. indirect<T, A>).
-// V contributes only its type aliases; value_type is stored directly in the
-// ref-counted model — there is no extra indirection through V at runtime.
+// copy_on_write<V> is an allocator-aware copy-on-write wrapper following the
+// basic_optional pattern from P2047R7. It stores its own allocator and uses
+// uses-allocator construction (std::uses_allocator_construction_args) to forward
+// the allocator into V when constructing it. V handles all memory allocation for
+// its contained value; copy_on_write's allocator is stored for propagation and
+// forwarding only — it is never used to allocate T directly.
+//
+// Intended use: copy_on_write<indirect<T, A>> is equivalent to the original
+// copy_on_write<T, A> in copy_on_write.hpp.
 template <typename V>
 class copy_on_write
 {
@@ -95,7 +101,7 @@ public:
              std::default_initializable<allocator_type>)
   explicit copy_on_write(std::in_place_t, Us&&... us)
     : _alloc{}
-    , _self{_make_model(_alloc, std::forward<Us>(us)...)}
+    , _self{_make_model(_alloc, std::in_place, std::forward<Us>(us)...)}
   {
   }
 
@@ -104,7 +110,7 @@ public:
              std::default_initializable<allocator_type>)
   explicit copy_on_write(std::in_place_t, std::initializer_list<I> ilist, Us&&... us)
     : _alloc{}
-    , _self{_make_model(_alloc, ilist, std::forward<Us>(us)...)}
+    , _self{_make_model(_alloc, std::in_place, ilist, std::forward<Us>(us)...)}
   {
   }
 
@@ -132,7 +138,7 @@ public:
                          std::in_place_t,
                          Us&&... us)
     : _alloc{a}
-    , _self{_make_model(_alloc, std::forward<Us>(us)...)}
+    , _self{_make_model(_alloc, std::in_place, std::forward<Us>(us)...)}
   {
   }
 
@@ -144,7 +150,7 @@ public:
                          std::initializer_list<I> ilist,
                          Us&&... us)
     : _alloc{a}
-    , _self{_make_model(_alloc, ilist, std::forward<Us>(us)...)}
+    , _self{_make_model(_alloc, std::in_place, ilist, std::forward<Us>(us)...)}
   {
   }
 
@@ -160,11 +166,11 @@ public:
       return;
     }
 
-    if (a == other._alloc) {
+    if (alloc_traits::is_always_equal::value || _alloc == other._alloc) {
       _self = other._self;
       _self->count.fetch_add(1, std::memory_order_relaxed);
     } else {
-      _self = _make_model(_alloc, *other);
+      _self = _make_model(_alloc, *(std::as_const(other._self->value)));
     }
   }
 
@@ -178,10 +184,10 @@ public:
       return;
     }
 
-    if (alloc_traits::is_always_equal::value || a == other._alloc) {
+    if (alloc_traits::is_always_equal::value || _alloc == other._alloc) {
       _self = std::exchange(other._self, nullptr);
     } else {
-      _self = _make_model(_alloc, std::move(other._self->value));
+      _self = _make_model(_alloc, std::move(*other._self->value));
       other._reset(nullptr);
     }
   }
@@ -200,7 +206,7 @@ public:
       _self = x._self;
       _self->count.fetch_add(1, std::memory_order_relaxed);
     } else {
-      _self = _make_model(_alloc, *x);
+      _self = _make_model(_alloc, *(std::as_const(x._self->value)));
     }
   }
 
@@ -215,7 +221,7 @@ public:
     assert(valueless_after_move() || _self->count > 0);
     if (_self != nullptr && _self->count.fetch_sub(1, std::memory_order_release) == 1) {
       std::atomic_thread_fence(std::memory_order_acquire);
-      _destroy_model(_alloc, _self);
+      _destroy_model(_self);
     }
   }
 
@@ -235,7 +241,7 @@ public:
       x._self->count.fetch_add(1, std::memory_order_relaxed);
       _reset(x._self);
     } else {
-      _reset(_make_model(_alloc, *x));
+      _reset(_make_model(_alloc, *(std::as_const(x._self->value))));
     }
 
     if constexpr (pocca) {
@@ -260,7 +266,7 @@ public:
     } else if (pocma || _alloc == x._alloc) {
       _reset(std::exchange(x._self, nullptr));
     } else {
-      _reset(_make_model(_alloc, std::move(x._self->value)));
+      _reset(_make_model(_alloc, std::move(*x._self->value)));
       x._reset(nullptr);
     }
 
@@ -281,7 +287,7 @@ public:
       return *this;
     }
 
-    return *this = copy_on_write(std::forward<U>(x));
+    return *this = copy_on_write(std::allocator_arg, _alloc, std::forward<U>(x));
   }
 
   //
@@ -291,13 +297,13 @@ public:
   auto operator*() const noexcept -> value_type const&
   {
     assert(!valueless_after_move());
-    return _self->value;
+    return *(_self->value);
   }
 
   auto operator->() const noexcept -> const_pointer
   {
     assert(!valueless_after_move());
-    return std::pointer_traits<const_pointer>::pointer_to(_self->value);
+    return std::pointer_traits<const_pointer>::pointer_to(*(_self->value));
   }
 
   [[nodiscard]] auto valueless_after_move() const noexcept -> bool { return _self == nullptr; }
@@ -324,12 +330,12 @@ public:
   void modify(Action&& action)
   {
     if (use_count() > 1) {
-      auto* p = _make_model(_alloc, std::as_const(_self->value));
+      auto* p = _make_model(_alloc, *(std::as_const(_self->value)));
       _self->count.fetch_sub(1, std::memory_order_release);
       _self = p;
     }
 
-    std::forward<Action>(action)(_self->value);
+    std::forward<Action>(action)(*(_self->value));
   }
 
   template <detail::cow_action<value_type> Action, detail::cow_transformation<value_type> Transform>
@@ -337,11 +343,11 @@ public:
   {
     if (use_count() > 1) {
       auto* p =
-        _make_model(_alloc, std::forward<Transform>(transform)(std::as_const(_self->value)));
+        _make_model(_alloc, std::forward<Transform>(transform)(*(std::as_const(_self->value))));
       _self->count.fetch_sub(1, std::memory_order_release);
       _self = p;
     } else {
-      std::forward<Action>(action)(_self->value);
+      std::forward<Action>(action)(*(_self->value));
     }
   }
 
@@ -362,38 +368,42 @@ private:
   struct model
   {
     std::atomic<long> count;
-    value_type value;
+    V value; // V = indirect<T, A>; V handles all allocation for its contained T
   };
 
-  using model_alloc_t = typename alloc_traits::template rebind_alloc<model>;
-
+  // Constructs V via uses-allocator construction, forwarding alloc into V so
+  // that V's allocator (e.g. indirect's) is set correctly. The model itself is
+  // allocated via std::allocator<model> so V's allocator exclusively tracks T.
   template <typename... Args>
-  static auto _make_model(allocator_type& alloc, Args&&... args) -> model*
+  static auto _make_model(allocator_type const& alloc, Args&&... args) -> model*
   {
-    auto ma = model_alloc_t{alloc};
-    auto* p = std::allocator_traits<model_alloc_t>::allocate(ma, 1);
-    ::new (std::addressof(p->count)) std::atomic<long>{1};
+    std::allocator<model> ma;
+    auto* p = ma.allocate(1);
+    ::new(std::addressof(p->count)) std::atomic<long>{1};
     try {
-      alloc_traits::construct(alloc, std::addressof(p->value), std::forward<Args>(args)...);
+      std::apply(
+        [&](auto&&... vargs) {
+          ::new(std::addressof(p->value)) V(std::forward<decltype(vargs)>(vargs)...);
+        },
+        std::uses_allocator_construction_args<V>(alloc, std::forward<Args>(args)...));
     } catch (...) {
-      std::allocator_traits<model_alloc_t>::deallocate(ma, p, 1);
+      ma.deallocate(p, 1);
       throw;
     }
     return p;
   }
 
-  static void _destroy_model(allocator_type& alloc, model* p)
+  static void _destroy_model(model* p) noexcept
   {
-    auto ma = model_alloc_t{alloc};
-    alloc_traits::destroy(alloc, std::addressof(p->value));
-    std::allocator_traits<model_alloc_t>::deallocate(ma, p, 1);
+    p->value.~V(); // V's destructor frees T using V's own stored allocator
+    std::allocator<model>{}.deallocate(p, 1);
   }
 
   void _reset(model* v)
   {
     if (_self != nullptr && _self->count.fetch_sub(1, std::memory_order_release) == 1) {
       std::atomic_thread_fence(std::memory_order_acquire);
-      _destroy_model(_alloc, _self);
+      _destroy_model(_self);
     }
     _self = v;
   }
