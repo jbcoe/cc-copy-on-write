@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSL-1.0
 
-#include <copy_on_write.hpp>
+#include <composable_value_types.h>
 #include <gtest/gtest.h>
 
 #include <string>
@@ -11,7 +11,7 @@
 
 TEST(Modifiers, ModifyActionMutatesInPlaceWhenUnshared)
 {
-  xyz::copy_on_write<int> x(5);
+  xyz::copy_on_write<xyz::indirect<int>> x(5);
   int const* ptr_before = &(*x);
   x.modify([](int& v) { v += 10; });
   EXPECT_EQ(*x, 15);
@@ -20,8 +20,8 @@ TEST(Modifiers, ModifyActionMutatesInPlaceWhenUnshared)
 
 TEST(Modifiers, ModifyActionDeepCopiesBeforeMutatingWhenShared)
 {
-  xyz::copy_on_write<int> a(5);
-  xyz::copy_on_write<int> b(a);
+  xyz::copy_on_write<xyz::indirect<int>> a(5);
+  xyz::copy_on_write<xyz::indirect<int>> b(a);
   ASSERT_TRUE(a.identical_to(b));
 
   b.modify([](int& v) { v += 10; });
@@ -33,8 +33,8 @@ TEST(Modifiers, ModifyActionDeepCopiesBeforeMutatingWhenShared)
 
 TEST(Modifiers, ModifyActionOnSharedLeavesOriginalUseCountAtOne)
 {
-  xyz::copy_on_write<int> a(1);
-  xyz::copy_on_write<int> b(a);
+  xyz::copy_on_write<xyz::indirect<int>> a(1);
+  xyz::copy_on_write<xyz::indirect<int>> b(a);
   b.modify([](int& v) { v = 99; });
   EXPECT_EQ(a.use_count(), 1);
   EXPECT_EQ(b.use_count(), 1);
@@ -46,7 +46,7 @@ TEST(Modifiers, ModifyActionOnSharedLeavesOriginalUseCountAtOne)
 
 TEST(Modifiers, ModifyActionTransformCallsActionInPlaceWhenUnshared)
 {
-  xyz::copy_on_write<std::string> x("hello");
+  xyz::copy_on_write<xyz::indirect<std::string>> x("hello");
   bool action_called = false;
   bool transform_called = false;
 
@@ -67,8 +67,8 @@ TEST(Modifiers, ModifyActionTransformCallsActionInPlaceWhenUnshared)
 
 TEST(Modifiers, ModifyActionTransformCallsTransformWhenShared)
 {
-  xyz::copy_on_write<std::string> a("hello");
-  xyz::copy_on_write<std::string> b(a);
+  xyz::copy_on_write<xyz::indirect<std::string>> a("hello");
+  xyz::copy_on_write<xyz::indirect<std::string>> b(a);
   bool action_called = false;
   bool transform_called = false;
 
@@ -94,8 +94,8 @@ TEST(Modifiers, ModifyActionTransformCallsTransformWhenShared)
 
 TEST(Modifiers, MemberSwapExchangesValues)
 {
-  xyz::copy_on_write<int> a(1);
-  xyz::copy_on_write<int> b(2);
+  xyz::copy_on_write<xyz::indirect<int>> a(1);
+  xyz::copy_on_write<xyz::indirect<int>> b(2);
   a.swap(b);
   EXPECT_EQ(*a, 2);
   EXPECT_EQ(*b, 1);
@@ -103,8 +103,8 @@ TEST(Modifiers, MemberSwapExchangesValues)
 
 TEST(Modifiers, MemberSwapWithValuelessObject)
 {
-  xyz::copy_on_write<int> a(42);
-  xyz::copy_on_write<int> b(std::move(a));
+  xyz::copy_on_write<xyz::indirect<int>> a(42);
+  xyz::copy_on_write<xyz::indirect<int>> b(std::move(a));
   // a is now valueless, b holds 42
   b.swap(a);
   EXPECT_EQ(*a, 42);
@@ -117,8 +117,8 @@ TEST(Modifiers, MemberSwapWithValuelessObject)
 
 TEST(Modifiers, FreeSwapDelegatesToMemberSwap)
 {
-  xyz::copy_on_write<int> a(10);
-  xyz::copy_on_write<int> b(20);
+  xyz::copy_on_write<xyz::indirect<int>> a(10);
+  xyz::copy_on_write<xyz::indirect<int>> b(20);
   using std::swap;
   swap(a, b);
   EXPECT_EQ(*a, 20);

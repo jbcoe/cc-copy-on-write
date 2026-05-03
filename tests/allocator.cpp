@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSL-1.0
 
-#include <copy_on_write.hpp>
+#include <composable_value_types.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -169,7 +169,7 @@ TEST(Allocator, ExceptionDeallocates)
   int allocs = 0, deallocs = 0;
   tracking_allocator<ThrowOnCopy> ta(&allocs, &deallocs, 1);
 
-  EXPECT_THROW((xyz::copy_on_write<ThrowOnCopy, tracking_allocator<ThrowOnCopy>>(
+  EXPECT_THROW((xyz::copy_on_write<xyz::indirect<ThrowOnCopy, tracking_allocator<ThrowOnCopy>>>(
                  std::allocator_arg, ta, ThrowOnCopy{})),
                std::runtime_error);
   EXPECT_EQ(allocs, 1);
@@ -185,7 +185,7 @@ TEST(Allocator, ExactlyOneAllocationPerConstructedObject)
   int allocs = 0, deallocs = 0;
   tracking_allocator<int> ta(&allocs, &deallocs, 1);
   {
-    xyz::copy_on_write<int, tracking_allocator<int>> x(std::allocator_arg, ta, 42);
+    xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> x(std::allocator_arg, ta, 42);
     EXPECT_EQ(allocs, 1);
   }
   EXPECT_EQ(deallocs, 1);
@@ -196,9 +196,9 @@ TEST(Allocator, DestructorDeallocatesWhenUseCountDropsToZero)
   int allocs = 0, deallocs = 0;
   tracking_allocator<int> ta(&allocs, &deallocs, 1);
   {
-    xyz::copy_on_write<int, tracking_allocator<int>> a(std::allocator_arg, ta, 1);
+    xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> a(std::allocator_arg, ta, 1);
     {
-      xyz::copy_on_write<int, tracking_allocator<int>> b(a);
+      xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> b(a);
       EXPECT_EQ(deallocs, 0);
     }
     EXPECT_EQ(deallocs, 0); // a still alive
@@ -214,9 +214,9 @@ TEST(Allocator, CopyWithSameAllocatorSharesModel)
 {
   int allocs = 0, deallocs = 0;
   tracking_allocator<int> ta(&allocs, &deallocs, 1);
-  xyz::copy_on_write<int, tracking_allocator<int>> a(std::allocator_arg, ta, 5);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> a(std::allocator_arg, ta, 5);
   int allocs_before = allocs;
-  xyz::copy_on_write<int, tracking_allocator<int>> b(std::allocator_arg, ta, a);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> b(std::allocator_arg, ta, a);
   EXPECT_EQ(allocs, allocs_before); // no new allocation
   EXPECT_TRUE(a.identical_to(b));
 }
@@ -228,8 +228,8 @@ TEST(Allocator, CopyWithDifferentAllocatorAllocatesNewModel)
   tracking_allocator<int> ta1(&allocs1, &deallocs1, 1);
   tracking_allocator<int> ta2(&allocs2, &deallocs2, 2);
 
-  xyz::copy_on_write<int, tracking_allocator<int>> a(std::allocator_arg, ta1, 5);
-  xyz::copy_on_write<int, tracking_allocator<int>> b(std::allocator_arg, ta2, a);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> a(std::allocator_arg, ta1, 5);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> b(std::allocator_arg, ta2, a);
 
   EXPECT_EQ(allocs2, 1);
   EXPECT_FALSE(a.identical_to(b));
@@ -247,8 +247,8 @@ TEST(Allocator, PoccaAllocatorIsPropagatedOnCopyAssignment)
   pocca_allocator<int> ta1(&allocs1, &deallocs1, 1);
   pocca_allocator<int> ta2(&allocs2, &deallocs2, 2);
 
-  xyz::copy_on_write<int, pocca_allocator<int>> a(std::allocator_arg, ta1, 10);
-  xyz::copy_on_write<int, pocca_allocator<int>> b(std::allocator_arg, ta2, 20);
+  xyz::copy_on_write<xyz::indirect<int, pocca_allocator<int>>> a(std::allocator_arg, ta1, 10);
+  xyz::copy_on_write<xyz::indirect<int, pocca_allocator<int>>> b(std::allocator_arg, ta2, 20);
 
   b = a;
 
@@ -268,8 +268,8 @@ TEST(Allocator, PocmaAllocatorIsPropagatedOnMoveAssignment)
   pocma_allocator<int> ta1(&allocs1, &deallocs1, 1);
   pocma_allocator<int> ta2(&allocs2, &deallocs2, 2);
 
-  xyz::copy_on_write<int, pocma_allocator<int>> a(std::allocator_arg, ta1, 10);
-  xyz::copy_on_write<int, pocma_allocator<int>> b(std::allocator_arg, ta2, 20);
+  xyz::copy_on_write<xyz::indirect<int, pocma_allocator<int>>> a(std::allocator_arg, ta1, 10);
+  xyz::copy_on_write<xyz::indirect<int, pocma_allocator<int>>> b(std::allocator_arg, ta2, 20);
 
   b = std::move(a);
 
@@ -285,8 +285,8 @@ TEST(Allocator, WithoutPocmaMoveAssignmentMovesValue)
   tracking_allocator<int> ta1(&allocs1, &deallocs1, 1);
   tracking_allocator<int> ta2(&allocs2, &deallocs2, 2);
 
-  xyz::copy_on_write<int, tracking_allocator<int>> a(std::allocator_arg, ta1, 55);
-  xyz::copy_on_write<int, tracking_allocator<int>> b(std::allocator_arg, ta2, 0);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> a(std::allocator_arg, ta1, 55);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> b(std::allocator_arg, ta2, 0);
 
   b = std::move(a);
 
@@ -306,8 +306,8 @@ TEST(Allocator, PocsAllocatorsAreSwappedOnMemberSwap)
   pocs_allocator<int> ta1(&allocs1, &deallocs1, 1);
   pocs_allocator<int> ta2(&allocs2, &deallocs2, 2);
 
-  xyz::copy_on_write<int, pocs_allocator<int>> a(std::allocator_arg, ta1, 111);
-  xyz::copy_on_write<int, pocs_allocator<int>> b(std::allocator_arg, ta2, 222);
+  xyz::copy_on_write<xyz::indirect<int, pocs_allocator<int>>> a(std::allocator_arg, ta1, 111);
+  xyz::copy_on_write<xyz::indirect<int, pocs_allocator<int>>> b(std::allocator_arg, ta2, 222);
 
   a.swap(b);
 
@@ -356,8 +356,8 @@ TEST(Allocator, AllocArgMoveConstructorDifferentAllocatorAllocatesNewModel)
   tracking_allocator<int> ta1(&allocs1, &deallocs1, 1);
   tracking_allocator<int> ta2(&allocs2, &deallocs2, 2);
 
-  xyz::copy_on_write<int, tracking_allocator<int>> a(std::allocator_arg, ta1, 99);
-  xyz::copy_on_write<int, tracking_allocator<int>> b(std::allocator_arg, ta2, std::move(a));
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> a(std::allocator_arg, ta1, 99);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> b(std::allocator_arg, ta2, std::move(a));
 
   EXPECT_TRUE(a.valueless_after_move());
   EXPECT_EQ(*b, 99);
@@ -374,8 +374,8 @@ TEST(Allocator, CopyConstructorWithDivergingAllocatorAllocatesNewModel)
   int allocs = 0, deallocs = 0;
   soccc_allocator<int> da(&allocs, &deallocs, 1);
 
-  xyz::copy_on_write<int, soccc_allocator<int>> a(std::allocator_arg, da, 42);
-  xyz::copy_on_write<int, soccc_allocator<int>> b(a);
+  xyz::copy_on_write<xyz::indirect<int, soccc_allocator<int>>> a(std::allocator_arg, da, 42);
+  xyz::copy_on_write<xyz::indirect<int, soccc_allocator<int>>> b(a);
 
   EXPECT_FALSE(a.identical_to(b));           // fresh model allocated
   EXPECT_NE(a.get_allocator(), b.get_allocator()); // allocators diverged
@@ -394,8 +394,8 @@ TEST(Allocator, CopyAssignmentWithDifferentNonPropagatingAllocatorAllocatesNewMo
   tracking_allocator<int> ta1(&allocs1, &deallocs1, 1);
   tracking_allocator<int> ta2(&allocs2, &deallocs2, 2);
 
-  xyz::copy_on_write<int, tracking_allocator<int>> a(std::allocator_arg, ta1, 10);
-  xyz::copy_on_write<int, tracking_allocator<int>> b(std::allocator_arg, ta2, 20);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> a(std::allocator_arg, ta1, 10);
+  xyz::copy_on_write<xyz::indirect<int, tracking_allocator<int>>> b(std::allocator_arg, ta2, 20);
 
   b = a;
 
