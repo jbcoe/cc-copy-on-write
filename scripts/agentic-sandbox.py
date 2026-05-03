@@ -52,7 +52,7 @@ def main() -> None:
         ["git", "rev-parse", "--show-toplevel"], text=True
     ).strip()
 
-    image_name = "cc-protocol-sandbox"
+    image_name = "cc-copy-on-write-sandbox"
 
     image_exists = (
         subprocess.run(
