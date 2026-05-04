@@ -16,7 +16,7 @@ model stores V directly.
 
 **Problem:** double indirection.
 
-```
+```cpp
 copy_on_write._self → model { count, indirect<T,A> { T* } } → T
 ```
 
