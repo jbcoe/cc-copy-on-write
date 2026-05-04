@@ -43,25 +43,25 @@ Three reasons:
 
 2. **Shared ownership, independent allocator identity.** Multiple
    `copy_on_write` objects can share one model. When one unshares (via `modify`
-   or value assignment) it must allocate a new model using *its* allocator. The
+   or value assignment) it must allocate a new model using _its_ allocator. The
    allocator is a property of each object, not of the shared model.
 
 3. **The C++ allocator model.** POCCA, POCMA, and POCS are operations on the
-   *container's* allocator. They update `_alloc` independently of what happens
+   _container's_ allocator. They update `_alloc` independently of what happens
    to the stored value.
 
 ### Why `model* _self` causes double indirection
 
 Storing V = `indirect<T, A>` inside the model gives:
 
-```
+```cpp
 copy_on_write._self (ptr) → model { count, V { ptr } } → T
 ```
 
 Two pointer chases. The original `copy_on_write.hpp` avoids this by storing T
 inline in the model:
 
-```
+```cpp
 copy_on_write._self (ptr) → model { count, T }
 ```
 
@@ -113,7 +113,7 @@ performance-sensitive cases a dedicated type is better.
 Merge the ref count and the derived object into a single heap allocation using a
 virtual model base:
 
-```
+```cpp
 _self → model_derived<Derived> { count, [vtable], Derived_fields... }
 ```
 
@@ -151,6 +151,7 @@ A composable design separates these:
 **Ownership** — lives in `copy_on_write`, unchanged regardless of storage.
 
 **Storage policy** — how the heap node lays out the value. Must provide:
+
 - a `model` type (heap node carrying the ref count)
 - `make_model(args...)` — factory
 - `destroy_model(model*)` — cleanup
@@ -159,12 +160,12 @@ A composable design separates these:
 
 Two concrete policies:
 
-| Policy | Layout | Dispatch |
-|--------|--------|----------|
-| Inline | `{ count, T }` | direct |
-| Virtual | `{ count, vtable, Derived }` | virtual |
+| Policy  | Layout                       | Dispatch |
+| ------- | ---------------------------- | -------- |
+| Inline  | `{ count, T }`               | direct   |
+| Virtual | `{ count, vtable, Derived }` | virtual  |
 
-```
+```cpp
 copy_on_write<T>                 → inline policy   → single indirection, non-virtual
 copy_on_write_polymorphic<Base>  → virtual policy  → single indirection, vtable
 copy_on_write<polymorphic<Base>> → inline policy   → double indirection, non-virtual (correct but slower)
